@@ -3,18 +3,40 @@ import datetime
 import pandas as pd
 from time import sleep
 
+import logging
+from logging.handlers import RotatingFileHandler
+
+logger = logging.getLogger("Lab Manager")
+logger.setLevel(logging.INFO)
+handler = RotatingFileHandler('log.txt', backupCount=1, maxBytes=2 ** 20)
+logger.addHandler(handler)
+
+
+def now():
+    return datetime.datetime.now()
+
+
+def now_str():
+    return now().strftime('%Y-%m-%d_%H:%M:%S')
+
+
+def log(text):
+    logger.info(now_str() + ": " + text)
+
+
 class CSVGenerator:
     def __init__(self):
-        self.fileName = "./collectedData/LabManager_PowerConsumption_" + datetime.datetime.now().strftime('%Y-%m-%d_%H:%M:%S') + ".csv"
+        self.fileName = "/home/LabManager/Documents/TCC/RaspberryPi/collectedData/LabManager_PowerConsumption_" + now_str()  + ".csv"
         self.colNames = ["current (A)","timestamp"]
 
     def insertIntoCsv(self, value):
         df = pd.DataFrame ({
           self.colNames[0]: value,
-          self.colNames[1]:  datetime.datetime.now().strftime('%d-%m-%Y_%H:%M:%S'),
-          })
+          self.colNames[1]: now_str(),
+        })
         with open(self.fileName, 'a') as f:
           df.to_csv(f, header=f.tell()==0, index=False)
+          f.close()
 
 
 class CurrentSensor:
@@ -52,6 +74,9 @@ class PIRSensor:
 
     def setMissInterval(self):
         self.lastDetectedIsInPermanency = False
+    
+    def getPir(self, com):
+        com.sendMessage("pir")
 
 
 class Relay:
@@ -60,8 +85,8 @@ class Relay:
         self.timer = datetime.datetime.now()
         self.lastTimer = datetime.datetime.now()
         self.toTurnOff = datetime.datetime.now()
-        self.permanencyTime = datetime.timedelta(seconds=15)
-        self.countDownTime = datetime.timedelta(seconds=1)
+        self.permanencyTime = datetime.timedelta(minutes=5)
+        self.countDownTime = datetime.timedelta(seconds=5)
 
     def turnOn(self, com):
         self.curr = True
@@ -86,25 +111,23 @@ class Relay:
 class Comunicator:
     def __init__(self):
         self.ser = serial.Serial("/dev/ttyACM0", 9600, timeout=1)
-        sleep(0.1)
         self.ser.reset_input_buffer()
 
     def getMessage(self):
+        sleep(0.25)
         if self.ser.isOpen():
             try:
-                while self.ser.inWaiting() == 0:
-                    pass
                 if self.ser.inWaiting() > 0:
                     answer = str(self.ser.readline().decode("utf-8").rstrip())
                     self.ser.flushInput()
                     return answer
             except KeyboardInterrupt:
                 pass
+        return ''
 
     def sendMessage(self, key="", data=""):
         self.ser.write(key.encode("utf-8")+ b"," + data.encode("utf-8") + b"\n")
-        self.ser.flushInput()
-
+        sleep(1)
 
 
 class Manager:
@@ -121,6 +144,9 @@ class Manager:
 
         self.needRequest = True
 
+        # Variável para evitar leitura suja do sensor de presença inicial
+        self.count = 0
+
     def requestSerial(self):
         return self.com.getMessage().split(": ")
 
@@ -134,62 +160,50 @@ class Manager:
         return self.timer - self.lastTimer >= self.requestTime
 
     def run(self):
-        if self.needRequest:
-            serialResponse = self.requestSerial()
+        serialResponse = self.requestSerial()
 
-            print(serialResponse)
-
+        if serialResponse[0] != "":
             if serialResponse[0] == "PIR":
                 if serialResponse[1] == "True":
-                    if not self.pir.lastDetectedIsInPermanency:
-                        self.pir.setDetected()
-                        self.pir.setDetectedInterval()
+                    log("Movimento detectado")
+                    self.pir.setDetected()
+                    self.relay.setLastTimer()
+
+                    if self.count > 3:
                         self.relay.turnOn(self.com)
-                        self.relay.setTimer()
-                        self.relay.setLastTimer()
-                        self.needRequest = False
-                        print("Liguei tudo")
-
+                    else:
+                        self.count += 1
                 elif serialResponse[1] == "False":
+                    log("Nenhum movimento detectado")
                     self.pir.setMiss()
-
-                    if self.relay.toTurnOff <= self.timer:
+                    if self.relay.hasPassedPermanencyTime():
+                        log("Desliguei as luzes")
                         self.relay.turnOff(self.com)
-                        self.needRequest = False
-                        print("Desliguei tudo")
+                        self.relay.setLastTimer()
+                self.setLastTimer()
 
-            self.setLastTimer()
-
-        else:
-            if self.relay.hasPassedPermanencyTime() and self.relay.curr:
-                self.relay.toTurnOff = self.relay.timer + self.relay.countDownTime
-                print("Se prepara que eu quero desligar")
-                self.pir.setMissInterval()
-                self.needRequest = True
-
-        if self.hasPassedRequestTime() and not self.relay.curr:
-            print("Vou lançar a requisição")
-            self.needRequest = True
-
-        if self.curr.hasReadCurrTime():
-            self.curr.getCurr(self.com)
-            serialResponse = self.requestSerial()
-            if serialResponse[0] == "Curr":
-                print("Vou coletar a corrente")
+            elif serialResponse[0] == "Curr":
+                log("Armazenando a corrente")
                 self.curr.setLastTimer()
                 self.csvGen.insertIntoCsv([serialResponse[1]])
+
+        if self.hasPassedRequestTime():
+            log("Detectando movimentos")
+            self.pir.getPir(self.com)
+
+        if self.curr.hasReadCurrTime():
+            log("Pedindo o valor da corrente")
+            self.curr.getCurr(self.com)
 
         self.curr.setTimer()
         self.relay.setTimer()
         self.setTimer()
-
 
 def main():
     man = Manager()
 
     while True:
         man.run()
-
 
 if __name__ == "__main__":
     main()

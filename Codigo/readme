@@ -1,7 +1,3 @@
-Para executar o código use
+Para executar o código abra o terminal na pasta principal do projeto e use:
 
-python3 RaspManager.py
-
-
-Não esqueça de adicionar o seu arquivo de credenciais!
-
+python3 ./RaspberryPi/main.py

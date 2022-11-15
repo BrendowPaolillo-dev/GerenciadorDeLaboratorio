@@ -1,7 +1,7 @@
 #include "EmonLib.h"
- 
+
 EnergyMonitor emon1;
- 
+
 
 int pirPin = 2;                 // PIR In pin
 int relayPin = 7;               // Relay Out pin
@@ -13,12 +13,12 @@ String data = "";
 
 void sendData(String key, String data){
   Serial.println(key + ": " + data);
+  delay(10);
 }
 
 void sendCurrData(){
   double data = emon1.calcIrms(1480);
-  Serial.print("Curr: ");
-  Serial.println(data, 2);
+  sendData("Curr", String(data,2));
 }
 
 void receiveData(){
@@ -37,7 +37,7 @@ void receiveData(){
 void setup() {
   Serial.begin(9600);
   pinMode(pirPin, INPUT);
-  pinMode(relayPin, OUTPUT); 
+  pinMode(relayPin, OUTPUT);
   emon1.current(ampmeterPin, 60);
 }
 
@@ -46,11 +46,11 @@ void loop() {
     sendCurrData();
   } else if (key == "relay") {
     if (data == "HIGH"){
-      digitalWrite(relayPin, LOW); //LIGA
+      digitalWrite(relayPin, HIGH); //LIGA
     }else {
-      digitalWrite(relayPin, HIGH); //DESLIGA
+      digitalWrite(relayPin, LOW); //DESLIGA
     }
-  } else {
+  } else if (key == "pir"){
     pirStat = digitalRead(pirPin);
     if (pirStat == HIGH) {
       sendData("PIR", "True");
@@ -58,7 +58,7 @@ void loop() {
       sendData("PIR", "False");
     }
   }
-  
+
   receiveData();
-  delay(100);
+  delay(500);
 }
